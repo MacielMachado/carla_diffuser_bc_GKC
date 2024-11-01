@@ -1,6 +1,22 @@
 import numpy as np
 import time
+import gym
 from gym.wrappers.monitoring.video_recorder import ImageEncoder
+from agent_policy import AgentPolicy
+from stable_baselines3.common.vec_env import SubprocVecEnv
+import json
+from carla_gym.envs import EndlessEnv
+from data_collect import reward_configs, terminal_configs, obs_configs
+from rl_birdview_wrapper import RlBirdviewWrapper
+import torch as th
+
+
+env_configs = {
+    'carla_map': 'Town01',
+    'num_zombie_vehicles': [0, 150],
+    'num_zombie_walkers': [0, 300],
+    'weather_group': 'dynamic_1.0'
+}
 
 
 def evaluate_policy(env, policy, video_path, min_eval_steps=3000):
@@ -114,3 +130,43 @@ def get_avg_route_completion(ep_route_completion, prefix=''):
     avg_ep_stat[f'{prefix}avg_n_episodes'] = n_episodes
 
     return avg_ep_stat
+
+
+def env_maker():
+    cfg = json.load(open("config.json", "r"))
+    env = EndlessEnv(obs_configs=obs_configs, reward_configs=reward_configs,
+                    terminal_configs=terminal_configs, host='localhost', port=2020,
+                    seed=2021, no_rendering=True, **env_configs)
+    env = RlBirdviewWrapper(env)
+    return env
+
+
+if __name__ == '__main__':
+    env = SubprocVecEnv([env_maker])
+
+    resume_last_train = False
+
+    observation_space = {}
+    observation_space['birdview'] = gym.spaces.Box(low=0, high=255, shape=(3, 192, 192), dtype=np.uint8)
+    observation_space['state'] = gym.spaces.Box(low=-10.0, high=30.0, shape=(6,), dtype=np.float32)
+    observation_space = gym.spaces.Dict(**observation_space)
+
+    action_space = gym.spaces.Box(low=np.array([0, -1]), high=np.array([1, 1]), dtype=np.float32)
+
+    # network
+    policy_kwargs = {
+        'observation_space': observation_space,
+        'action_space': action_space,
+        'policy_head_arch': [256, 256],
+        'features_extractor_entry_point': 'torch_layers:XtMaCNN',
+        'features_extractor_kwargs': {'states_neurons': [256,256]},
+        'distribution_entry_point': 'distributions:DiagGaussianDistribution',
+        'architecture': 'diffusion',
+        'betas': (1e-4, 0.02),
+        'n_T': 20,
+}
+    
+    model_path = 'ckpt_mse_sem_trajetoria/bc_ckpt_8_min_eval.pth'
+
+    policy = AgentPolicy(**policy_kwargs)
+    policy.load_state_dict(th.load(model_path))

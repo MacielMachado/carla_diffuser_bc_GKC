@@ -25,11 +25,11 @@ env_configs = {
 
 
 def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train):
-    output_dir = Path('outputs_diff_fc')
+    output_dir = Path('outputs_diff_update')
     output_dir.mkdir(parents=True, exist_ok=True)
     last_checkpoint_path = output_dir / 'checkpoint.txt'
 
-    ckpt_dir = Path('ckpt_diff_sem_trajetoria_fc')
+    ckpt_dir = Path('ckpt_diff_sem_trajetoria_update')
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     if resume_last_train:
@@ -53,7 +53,7 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
         start_ep = 0
         i_steps = 0
 
-    video_path = Path('video_diff_sem_trajetoria_fc')
+    video_path = Path('video_diff_sem_trajetoria_update')
     video_path.mkdir(parents=True, exist_ok=True)
 
     optimizer = optim.Adam(policy.parameters(), lr=1e-5)
@@ -189,7 +189,7 @@ if __name__ == '__main__':
         'features_extractor_entry_point': 'torch_layers:XtMaCNN',
         'features_extractor_kwargs': {'states_neurons': [256,256]},
         'distribution_entry_point': 'distributions:DiagGaussianDistribution',
-        'architecture': 'diffusion',
+        'architecture': 'mse',
         'betas': (1e-4, 0.02),
         'n_T': 20,
 }
