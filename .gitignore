@@ -1,8 +1,10 @@
 .venv
-video
-gail_experts
-ckpt
-outputs
+video*
+gail_experts*
+ckpt*
+outputs*
 wandb
-*.pyc
 screenlog.0
+*.png
+.vscode
+__pycache__

@@ -7,6 +7,7 @@ import torch as th
 import torch.nn as nn
 import numpy as np
 from PIL import Image
+from diffusion import Model_mlp_diff_embed, ddpm_schedules
 
 from carla_gym.utils.config_utils import load_entry_point
 
@@ -20,7 +21,11 @@ class AgentPolicy(nn.Module):
                  features_extractor_entry_point=None,
                  features_extractor_kwargs={},
                  distribution_entry_point=None,
-                 distribution_kwargs={}):
+                 distribution_kwargs={},
+                 architecture='distribution',
+                 betas=(1e-4, 0.02), 
+                 n_T=20,
+                 drop_prob=0.0):
 
         super(AgentPolicy, self).__init__()
         self.observation_space = observation_space
@@ -29,6 +34,14 @@ class AgentPolicy(nn.Module):
         self.features_extractor_kwargs = features_extractor_kwargs
         self.distribution_entry_point = distribution_entry_point
         self.distribution_kwargs = distribution_kwargs
+        self.architecture = architecture
+        self.n_T = n_T
+        self.betas = betas
+        self.drop_prob = drop_prob
+        self.guide_w = 0.0
+
+        self.loss_mse = nn.MSELoss()
+
         if th.cuda.is_available():
             self.device = 'cuda'
         else:
@@ -55,8 +68,23 @@ class AgentPolicy(nn.Module):
         self.policy_head_arch = list(policy_head_arch)
         self.activation_fn = nn.ReLU
         self.ortho_init = False
+        self.latent_to_action = nn.Linear(256, 2)
+
+        self.nn_downstream = Model_mlp_diff_embed(
+            x_dim=256,
+            n_hidden=128,
+            y_dim=2,
+            embed_dim=128,
+            output_dim=2,
+            is_dropout=False,
+            is_batch=False,
+            activation="relu",
+            net_type='transformer',
+            use_prev=False)
 
         self._build()
+        for k, v in ddpm_schedules(betas[0], betas[1], n_T).items():
+            self.register_buffer(k, v)
             
     def reset_noise(self, n_envs: int = 1) -> None:
         assert self.use_sde, 'reset_noise() is only available when using gSDE'
@@ -140,6 +168,18 @@ class AgentPolicy(nn.Module):
         log_prob = log_prob.cpu().numpy()
         features = features.cpu().numpy()
         return actions, log_prob, mu, sigma, features
+    
+    def forward_mse(self, obs_dict: Dict[str, np.ndarray], deterministic: bool = False, clip_action: bool = False):
+        with th.no_grad():
+            obs_tensor_dict = dict([(k, th.as_tensor(v).to(self.device)) for k, v in obs_dict.items()])
+            features = self._get_features(obs_tensor_dict)
+            actions = self._get_action(features)
+
+        actions = actions.cpu().numpy()
+        if clip_action:
+            actions = np.clip(actions, self.action_space.low, self.action_space.high)
+        return actions
+            
 
     def scale_action(self, action: th.Tensor, eps=1e-7) -> th.Tensor:
         # input action \in [a_low, a_high]
@@ -178,6 +218,22 @@ class AgentPolicy(nn.Module):
             distribution_kwargs=self.distribution_kwargs,
         )
         return init_kwargs
+    
+    def _get_action(self, features: th.Tensor):
+        return self.latent_to_action(features)
+
+    def evaluate_actions_mse(self, obs_dict: Dict[str, th.Tensor], actions: th.Tensor):
+        features = self._get_features(obs_dict)
+        actions_pred = self._get_action(features)
+        loss = self.compute_mse_loss(actions, actions_pred)
+        return loss
+    
+    def compute_mse_loss(self, actions, actions_pred):
+        assert len(actions) == len(actions_pred)
+        y_diff_pow_2 = th.pow(actions - actions_pred, 2)
+        y_diff_sum = th.sum(y_diff_pow_2)/len(actions)
+        mse = th.pow(y_diff_sum, 0.5)
+        return mse
 
     @classmethod
     def load(cls, path):
@@ -202,3 +258,79 @@ class AgentPolicy(nn.Module):
             nn.init.orthogonal_(module.weight, gain=gain)
             if module.bias is not None:
                 module.bias.data.fill_(0.0)
+
+    def evaluate_actions_diffusion(self, obs_dict: Dict[str, th.Tensor], actions: th.Tensor):
+        _ts = th.randint(1, self.n_T + 1, (actions.shape[0], 1)).to(self.device)
+        
+        # dropout context with some probability
+        context_mask = th.bernoulli(th.zeros(obs_dict['birdview'].shape[0]) + self.drop_prob).to(self.device)
+
+        # randomly sample some noise, noise ~ N(0, 1)
+        noise = th.randn_like(actions).to(self.device)
+
+        # add noise to clean target actions
+        y_t = self.sqrtab[_ts] * actions + self.sqrtmab[_ts] * noise
+
+        # use nn model to predict noise
+        features = self._get_features(obs_dict)
+        latent_pi = self.policy_head(features)
+        noise_pred_batch = self.nn_downstream(y_t, latent_pi, _ts / self.n_T, context_mask)
+
+        return self.loss_mse(noise, noise_pred_batch)
+    
+    def forward_diffusion(self, obs_dict: Dict[str, np.ndarray], deterministic: bool = False, clip_action: bool = False):
+        # also use this as a shortcut to avoid doubling batch when guide_w is zero
+        is_zero = False
+        if self.guide_w > -1e-3 and self.guide_w < 1e-3:
+            is_zero = True
+
+        # how many noisy actions to begin with
+        n_sample = len(obs_dict['birdview'])
+        y_shape = (n_sample, 2)
+
+        # sample initial noise, y_0 ~ N(0, 1),
+        y_i = th.randn(y_shape).to(self.device)
+        
+        context_mask = th.zeros(len(obs_dict['birdview'])).to(self.device)
+        
+        # run denoising chain
+        y_i_store = []  # if want to trace how y_i evolved
+        for i in range(self.n_T, 0, -1):
+            t_is = th.tensor([i / self.n_T]).to(self.device)
+            t_is = t_is.repeat(n_sample, 1)
+
+            if not is_zero:
+                # double batch
+                y_i = y_i.repeat(2, 1)
+                t_is = t_is.repeat(2, 1)
+
+            z = th.randn(y_shape).to(self.device) if i > 1 else 0
+            with th.no_grad():
+                obs_tensor_dict = dict([(k, th.as_tensor(v).to(self.device)) for k, v in obs_dict.items()])
+                features = self._get_features(obs_tensor_dict)
+                latent_pi = self.policy_head(features)
+                eps = self.nn_downstream(y_i, latent_pi, t_is / self.n_T, context_mask)
+
+            actions = self.oneover_sqrta[i] * (y_i - eps * self.mab_over_sqrtmab[i]) + self.sqrt_beta_t[i] * z
+        actions = actions.cpu().numpy()
+        if clip_action:
+            actions = np.clip(actions, self.action_space.low, self.action_space.high)
+        return actions
+
+
+
+
+
+
+
+
+
+        with th.no_grad():
+            obs_tensor_dict = dict([(k, th.as_tensor(v).to(self.device)) for k, v in obs_dict.items()])
+            features = self._get_features(obs_tensor_dict)
+            actions = self._get_action(features)
+
+        actions = actions.cpu().numpy()
+        if clip_action:
+            actions = np.clip(actions, self.action_space.low, self.action_space.high)
+        return actions

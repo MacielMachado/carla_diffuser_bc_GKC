@@ -16,20 +16,33 @@ def evaluate_policy(env, policy, video_path, min_eval_steps=3000):
     ep_events = {}
     for i in range(env.num_envs):
         ep_events[f'venv_{i}'] = []
-
     n_step = 0
     n_timeout = 0
     env_done = np.array([False]*env.num_envs)
     # while n_step < min_eval_steps:
     while n_step < min_eval_steps or not np.all(env_done):
-        actions, log_probs, mu, sigma, _ = policy.forward(obs, deterministic=True, clip_action=True)
+        if policy.architecture == 'mse':
+            actions = policy.forward_mse(obs, deterministic=True, clip_action=True)
+            log_probs = np.array([0.0])
+            mu = np.array([[0.0, 0.0]])
+            sigma = np.array([0.0, 0.0])
+
+        elif policy.architecture == 'diffusion':
+            actions = policy.forward_diffusion(obs, deterministic=True, clip_action=True)
+            log_probs = np.array([0.0])
+            mu = np.array([[0.0, 0.0]])
+            sigma = np.array([0.0, 0.0])
+
+        elif policy.architecture == 'distribution':
+            actions, log_probs, mu, sigma, _ = policy.forward(obs, deterministic=True, clip_action=True)
+
         obs, reward, done, info = env.step(actions)
 
         for i in range(env.num_envs):
             env.set_attr('action_log_probs', log_probs[i], indices=i)
             env.set_attr('action_mu', mu[i], indices=i)
             env.set_attr('action_sigma', sigma[i], indices=i)
-
+        # print(f"name: {video_path}, n_step: {n_step}, np.all(env_done): {np.all(env_done)}")
         list_render.append(env.render(mode='rgb_array'))
 
         n_step += 1

@@ -25,11 +25,11 @@ env_configs = {
 
 
 def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train):
-    output_dir = Path('outputs')
+    output_dir = Path('outputs_diff_fc')
     output_dir.mkdir(parents=True, exist_ok=True)
     last_checkpoint_path = output_dir / 'checkpoint.txt'
 
-    ckpt_dir = Path('ckpt')
+    ckpt_dir = Path('ckpt_diff_sem_trajetoria_fc')
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     if resume_last_train:
@@ -47,20 +47,24 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
         policy.load_state_dict(saved_variables['policy_state_dict'])
         wandb.init(project='gail-carla2', id=wandb_run_id, resume='must')
     else:
-        run = wandb.init(project='gail-carla2', reinit=True)
+        run = wandb.init(project='diffusion', reinit=True)
         with open(last_checkpoint_path, 'w') as log_file:
             log_file.write(wandb.run.path)
         start_ep = 0
         i_steps = 0
 
-    video_path = Path('video')
+    video_path = Path('video_diff_sem_trajetoria_fc')
     video_path.mkdir(parents=True, exist_ok=True)
 
     optimizer = optim.Adam(policy.parameters(), lr=1e-5)
+    # optimizer = optim.Adam(policy.parameters(), lr=1e-3)
     episodes = 200
     ent_weight = 0.01
     min_eval_loss = np.inf
     eval_step = int(1e5)
+
+    # eval_step = int(1e0)
+
     steps_last_eval = 0
 
     for i_episode in tqdm.tqdm(range(start_ep, episodes)):
@@ -77,10 +81,17 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
             expert_action = expert_action.to(device)
 
             # Get BC loss
-            alogprobs, entropy_loss = policy.evaluate_actions(obs_tensor_dict, expert_action)
-            bcloss = -alogprobs.mean()
+            if policy.architecture == 'distribution':
+                alogprobs, entropy_loss = policy.evaluate_actions(obs_tensor_dict, expert_action)
+                bcloss = -alogprobs.mean()
+                loss = bcloss + ent_weight * entropy_loss
 
-            loss = bcloss + ent_weight * entropy_loss
+            elif policy.architecture == 'mse':
+                loss = policy.evaluate_actions_mse(obs_tensor_dict, expert_action)
+
+            elif policy.architecture == 'diffusion':
+                loss = policy.evaluate_actions_diffusion(obs_tensor_dict, expert_action)
+
             total_loss += loss
             i_batch += 1
             i_steps += expert_obs_dict['state'].shape[0]
@@ -101,10 +112,17 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
 
             # Get BC loss
             with th.no_grad():
-                alogprobs, entropy_loss = policy.evaluate_actions(obs_tensor_dict, expert_action)
-            bcloss = -alogprobs.mean()
+                if policy.architecture == 'distribution':
+                    alogprobs, entropy_loss = policy.evaluate_actions(obs_tensor_dict, expert_action)
+                    bcloss = -alogprobs.mean()
+                    eval_loss = bcloss + ent_weight * entropy_loss
 
-            eval_loss = bcloss + ent_weight * entropy_loss
+                elif policy.architecture == 'mse':
+                    eval_loss = policy.evaluate_actions_mse(obs_tensor_dict, expert_action)
+
+                elif policy.architecture == 'diffusion':
+                    eval_loss = policy.evaluate_actions_diffusion(obs_tensor_dict, expert_action)
+
             total_eval_loss += eval_loss
             i_eval_batch += 1
         
@@ -146,7 +164,7 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
 def env_maker():
     cfg = json.load(open("config.json", "r"))
     env = EndlessEnv(obs_configs=obs_configs, reward_configs=reward_configs,
-                    terminal_configs=terminal_configs, host='localhost', port=cfg['port'],
+                    terminal_configs=terminal_configs, host='localhost', port=2020,
                     seed=2021, no_rendering=True, **env_configs)
     env = RlBirdviewWrapper(env)
     return env
@@ -170,8 +188,11 @@ if __name__ == '__main__':
         'policy_head_arch': [256, 256],
         'features_extractor_entry_point': 'torch_layers:XtMaCNN',
         'features_extractor_kwargs': {'states_neurons': [256,256]},
-        'distribution_entry_point': 'distributions:BetaDistribution',
-    }
+        'distribution_entry_point': 'distributions:DiagGaussianDistribution',
+        'architecture': 'diffusion',
+        'betas': (1e-4, 0.02),
+        'n_T': 20,
+}
 
     device = 'cuda'
 
@@ -179,6 +200,7 @@ if __name__ == '__main__':
     policy.to(device)
 
     batch_size = 24
+    # batch_size = 2
 
     gail_train_loader = th.utils.data.DataLoader(
         ExpertDataset(

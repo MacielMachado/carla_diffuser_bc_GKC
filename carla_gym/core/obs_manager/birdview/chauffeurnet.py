@@ -187,6 +187,9 @@ class ObsManager(ObsManagerBase):
         # masks
         c_road = road_mask * 255
         c_route = route_mask * 255
+        
+        c_route = np.zeros_like(route_mask)
+
         c_lane = lane_mask_all * 255
         c_lane[lane_mask_broken] = 120
 
