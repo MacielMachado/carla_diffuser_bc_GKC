@@ -9,6 +9,9 @@ from carla_gym.envs import EndlessEnv
 from data_collect import reward_configs, terminal_configs, obs_configs
 from rl_birdview_wrapper import RlBirdviewWrapper
 import torch as th
+from pathlib import Path
+import os
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 
 env_configs = {
@@ -142,7 +145,9 @@ def env_maker():
 
 
 if __name__ == '__main__':
-    env = SubprocVecEnv([env_maker])
+    # env = SubprocVecEnv([env_maker])
+    env = DummyVecEnv([env_maker]) 
+    # env = env_maker
 
     resume_last_train = False
 
@@ -161,12 +166,32 @@ if __name__ == '__main__':
         'features_extractor_entry_point': 'torch_layers:XtMaCNN',
         'features_extractor_kwargs': {'states_neurons': [256,256]},
         'distribution_entry_point': 'distributions:DiagGaussianDistribution',
-        'architecture': 'diffusion',
+        'architecture': 'mse',
         'betas': (1e-4, 0.02),
         'n_T': 20,
 }
-    
-    model_path = 'ckpt_mse_sem_trajetoria/bc_ckpt_8_min_eval.pth'
+    avg_lenght_in_m = 0
+    avg_lenght_in_m_max = 0
+    available_models = sorted(os.listdir('ckpt_mse_sem_trajetoria_update'), key=lambda x: os.path.getctime(os.path.join('ckpt_mse_sem_trajetoria_update', x)))
+    for model in available_models:
+        for i in range(5):
+            # model_path = 'ckpt_mse_sem_trajetoria_update/bc_ckpt_9_min_eval.pth'
+            model_path = 'ckpt_mse_sem_trajetoria_update/' + model 
+            video_path = 'evaluate/video_mse_sem_trajetoria_update'
+            os.makedirs(video_path, exist_ok=True)
+            video_path = video_path + f'/{model.split(".")[0]}_{i}.mp4'
+            policy = AgentPolicy(**policy_kwargs)
+            policy.load_state_dict(th.load(model_path)['policy_state_dict'])
+            policy.to('cuda')
+            avg_ep_stat, avg_route_completion, ep_events = evaluate_policy(env=env, policy=policy, video_path=video_path)
+            avg_lenght_in_m += avg_route_completion['eval/route_length_in_m']
+        
+            print(f'model: {model} - index: {i} - {avg_lenght_in_m/(i+1)}')
 
-    policy = AgentPolicy(**policy_kwargs)
-    policy.load_state_dict(th.load(model_path))
+        avg_lenght_in_m = avg_lenght_in_m/(i+1)
+        if avg_lenght_in_m > avg_lenght_in_m_max:
+            avg_lenght_in_m_max = avg_lenght_in_m
+            best_model = model
+    print("-----------------------------------------------------------")
+    print(f'best_model: {best_model}')
+    print(f'avg_lenght_in_m_max: {avg_lenght_in_m_max}')
