@@ -58,7 +58,7 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
 
     initial_lr = 1e-5
     optimizer = optim.Adam(policy.parameters(), lr=initial_lr)
-    episodes = 200
+    episodes = 500
     ent_weight = 0.01
     min_eval_loss = np.inf
     eval_step = int(1e5)
@@ -179,7 +179,7 @@ if __name__ == '__main__':
         'distribution_entry_point': 'distributions:DiagGaussianDistribution',
         'architecture': 'diffusion',
         'betas': (1e-4, 0.02),
-        'n_T': 20,
+        'n_T': 50,
 }
 
     device = 'cuda'
