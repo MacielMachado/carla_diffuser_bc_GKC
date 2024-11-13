@@ -25,11 +25,11 @@ env_configs = {
 
 
 def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train):
-    output_dir = Path('outputs_diff_fc')
+    output_dir = Path('outputs_diff_mse_diffusion')
     output_dir.mkdir(parents=True, exist_ok=True)
     last_checkpoint_path = output_dir / 'checkpoint.txt'
 
-    ckpt_dir = Path('ckpt_diff_sem_trajetoria_fc')
+    ckpt_dir = Path('ckpt_diff_sem_trajetoria_mse_diffusion')
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     if resume_last_train:
@@ -53,7 +53,7 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
         start_ep = 0
         i_steps = 0
 
-    video_path = Path('video_diff_sem_trajetoria_fc')
+    video_path = Path('video_diff_sem_trajetoria_mse_diffusion')
     video_path.mkdir(parents=True, exist_ok=True)
 
     initial_lr = 1e-5
@@ -183,7 +183,7 @@ if __name__ == '__main__':
         'features_extractor_entry_point': 'torch_layers:XtMaCNN',
         'features_extractor_kwargs': {'states_neurons': [256,256]},
         'distribution_entry_point': 'distributions:DiagGaussianDistribution',
-        'architecture': 'diffusion',
+        'architecture': 'mse_diffusion',
         'betas': (1e-4, 0.02),
         'n_T': 50,
 }
@@ -191,32 +191,31 @@ if __name__ == '__main__':
     device = 'cuda'
 
     policy = AgentPolicy(**policy_kwargs)
-    ckpt_path = 'ckpt_mse_sem_trajetoria_update/bc_ckpt_4_min_eval.pth'
+    # ckpt_path = 'ckpt_mse_sem_trajetoria_update/bc_ckpt_4_min_eval.pth'
 
-    trained_state_dict = th.load(ckpt_path)
+    # trained_state_dict = th.load(ckpt_path)
 
-    diff_policy_dict = policy.state_dict()
-    chaves_a_reutilizar = [
-        'features_extractor', 
-        'features_extractor.linear', 
-        'features_extractor.state_linear', 
-        'policy_head'
-    ]
+    # diff_policy_dict = policy.state_dict()
+    # chaves_a_reutilizar = [
+    #     'features_extractor', 
+    #     'features_extractor.linear', 
+    #     'features_extractor.state_linear', 
+    #     'policy_head'
+    # ]
 
-    for key in trained_state_dict['policy_state_dict']:
-        if any([key.startswith(chave) for chave in chaves_a_reutilizar]):
-            diff_policy_dict[key] = trained_state_dict['policy_state_dict'][key]
+    # for key in trained_state_dict['policy_state_dict']:
+    #     if any([key.startswith(chave) for chave in chaves_a_reutilizar]):
+    #         diff_policy_dict[key] = trained_state_dict['policy_state_dict'][key]
 
-    policy.load_state_dict(diff_policy_dict)
+    # policy.load_state_dict(diff_policy_dict)
 
-    for name, param in policy.named_parameters():
-        if any([name.startswith(chave) for chave in chaves_a_reutilizar]):
-            param.requires_grad = False
+    # for name, param in policy.named_parameters():
+    #     if any([name.startswith(chave) for chave in chaves_a_reutilizar]):
+    #         param.requires_grad = False
 
     policy.to(device)
 
     batch_size = 24
-    # batch_size = 2
 
     gail_train_loader = th.utils.data.DataLoader(
         ExpertDataset(
