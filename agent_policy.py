@@ -79,7 +79,7 @@ class AgentPolicy(nn.Module):
             is_dropout=False,
             is_batch=False,
             activation="relu",
-            net_type='transformer',
+            net_type='fc',
             use_prev=False)
 
         self._build()

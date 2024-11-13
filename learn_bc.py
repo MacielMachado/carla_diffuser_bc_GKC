@@ -13,7 +13,7 @@ from carla_gym.envs import EndlessEnv
 from rl_birdview_wrapper import RlBirdviewWrapper
 from data_collect import reward_configs, terminal_configs, obs_configs
 from eval_agent import evaluate_policy
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 
 
 env_configs = {
@@ -25,11 +25,11 @@ env_configs = {
 
 
 def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train):
-    output_dir = Path('outputs_diff_update')
+    output_dir = Path('outputs_diff_fc')
     output_dir.mkdir(parents=True, exist_ok=True)
     last_checkpoint_path = output_dir / 'checkpoint.txt'
 
-    ckpt_dir = Path('ckpt_diff_sem_trajetoria_update')
+    ckpt_dir = Path('ckpt_diff_sem_trajetoria_fc')
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     if resume_last_train:
@@ -53,25 +53,26 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
         start_ep = 0
         i_steps = 0
 
-    video_path = Path('video_diff_sem_trajetoria_update')
+    video_path = Path('video_diff_sem_trajetoria_fc')
     video_path.mkdir(parents=True, exist_ok=True)
 
-    optimizer = optim.Adam(policy.parameters(), lr=1e-5)
-    # optimizer = optim.Adam(policy.parameters(), lr=1e-3)
+    initial_lr = 1e-5
+    optimizer = optim.Adam(policy.parameters(), lr=initial_lr)
     episodes = 200
     ent_weight = 0.01
     min_eval_loss = np.inf
     eval_step = int(1e5)
-
-    # eval_step = int(1e0)
-
     steps_last_eval = 0
 
     for i_episode in tqdm.tqdm(range(start_ep, episodes)):
+        current_lr = decay_lr(i_episode, initial_lr, episodes)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = current_lr
+
         total_loss = 0
         i_batch = 0
         policy = policy.train()
-        # Expert dataset
+        
         for expert_batch in expert_loader:
             expert_obs_dict, expert_action = expert_batch
             obs_tensor_dict = {
@@ -80,15 +81,12 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
             }
             expert_action = expert_action.to(device)
 
-            # Get BC loss
             if policy.architecture == 'distribution':
                 alogprobs, entropy_loss = policy.evaluate_actions(obs_tensor_dict, expert_action)
                 bcloss = -alogprobs.mean()
                 loss = bcloss + ent_weight * entropy_loss
-
             elif policy.architecture == 'mse':
                 loss = policy.evaluate_actions_mse(obs_tensor_dict, expert_action)
-
             elif policy.architecture == 'diffusion':
                 loss = policy.evaluate_actions_diffusion(obs_tensor_dict, expert_action)
 
@@ -110,16 +108,13 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
             }
             expert_action = expert_action.to(device)
 
-            # Get BC loss
             with th.no_grad():
                 if policy.architecture == 'distribution':
                     alogprobs, entropy_loss = policy.evaluate_actions(obs_tensor_dict, expert_action)
                     bcloss = -alogprobs.mean()
                     eval_loss = bcloss + ent_weight * entropy_loss
-
                 elif policy.architecture == 'mse':
                     eval_loss = policy.evaluate_actions_mse(obs_tensor_dict, expert_action)
-
                 elif policy.architecture == 'diffusion':
                     eval_loss = policy.evaluate_actions_diffusion(obs_tensor_dict, expert_action)
 
@@ -128,10 +123,7 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
         
         loss = total_loss / i_batch
         eval_loss = total_eval_loss / i_eval_batch
-        wandb.log({
-            'loss': loss,
-            'eval_loss': eval_loss,
-        }, step=i_steps)
+        wandb.log({'loss': loss, 'eval_loss': eval_loss, 'current_lr': current_lr}, step=i_steps)
 
         if i_steps - steps_last_eval > eval_step:
             eval_video_path = (video_path / f'bc_eval_{i_steps}.mp4').as_posix()
@@ -143,22 +135,18 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
 
         if min_eval_loss > eval_loss:
             ckpt_path = (ckpt_dir / f'bc_ckpt_{i_episode}_min_eval.pth').as_posix()
-            th.save(
-                {'policy_state_dict': policy.state_dict()},
-               ckpt_path
-            )
+            th.save({'policy_state_dict': policy.state_dict()}, ckpt_path)
             min_eval_loss = eval_loss
 
-        train_init_kwargs = {
-            'start_ep': i_episode,
-            'i_steps': i_steps
-        } 
+        train_init_kwargs = {'start_ep': i_episode, 'i_steps': i_steps}
         ckpt_path = (ckpt_dir / 'ckpt_latest.pth').as_posix()
-        th.save({'policy_state_dict': policy.state_dict(),
-                 'train_init_kwargs': train_init_kwargs},
-                ckpt_path)
+        th.save({'policy_state_dict': policy.state_dict(), 'train_init_kwargs': train_init_kwargs}, ckpt_path)
         wandb.save(f'./{ckpt_path}')
-    run = run.finish()
+    run.finish()
+
+def decay_lr(epoch, lrate, episodes):
+    return lrate * ((np.cos((epoch / episodes) * np.pi) + 1) / 2)
+
 
 
 def env_maker():
@@ -170,7 +158,7 @@ def env_maker():
     return env
 
 if __name__ == '__main__':
-    env = SubprocVecEnv([env_maker])
+    env = DummyVecEnv([env_maker])
 
     resume_last_train = False
 
@@ -189,7 +177,7 @@ if __name__ == '__main__':
         'features_extractor_entry_point': 'torch_layers:XtMaCNN',
         'features_extractor_kwargs': {'states_neurons': [256,256]},
         'distribution_entry_point': 'distributions:DiagGaussianDistribution',
-        'architecture': 'mse',
+        'architecture': 'diffusion',
         'betas': (1e-4, 0.02),
         'n_T': 20,
 }
@@ -197,6 +185,28 @@ if __name__ == '__main__':
     device = 'cuda'
 
     policy = AgentPolicy(**policy_kwargs)
+    ckpt_path = 'ckpt_mse_sem_trajetoria_update/bc_ckpt_4_min_eval.pth'
+
+    trained_state_dict = th.load(ckpt_path)
+
+    diff_policy_dict = policy.state_dict()
+    chaves_a_reutilizar = [
+        'features_extractor', 
+        'features_extractor.linear', 
+        'features_extractor.state_linear', 
+        'policy_head'
+    ]
+
+    for key in trained_state_dict['policy_state_dict']:
+        if any([key.startswith(chave) for chave in chaves_a_reutilizar]):
+            diff_policy_dict[key] = trained_state_dict['policy_state_dict'][key]
+
+    policy.load_state_dict(diff_policy_dict)
+
+    for name, param in policy.named_parameters():
+        if any([name.startswith(chave) for chave in chaves_a_reutilizar]):
+            param.requires_grad = False
+
     policy.to(device)
 
     batch_size = 24
