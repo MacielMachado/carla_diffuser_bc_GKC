@@ -127,7 +127,10 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
         
         loss = total_loss / i_batch
         eval_loss = total_eval_loss / i_eval_batch
-        wandb.log({'loss': loss, 'eval_loss': eval_loss, 'current_lr': current_lr}, step=i_steps)
+        wandb.log({'loss': loss, 'eval_loss': eval_loss,
+                   'loss_mse': loss_mse, 'loss_diffusion': loss_diffusion,
+                   'current_lr': current_lr, 'current_alpha': alpha},
+                   step=i_steps)
 
         if i_steps - steps_last_eval > eval_step:
             eval_video_path = (video_path / f'bc_eval_{i_steps}.mp4').as_posix()

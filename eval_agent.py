@@ -46,7 +46,7 @@ def evaluate_policy(env, policy, video_path, min_eval_steps=3000):
             mu = np.array([[0.0, 0.0]])
             sigma = np.array([0.0, 0.0])
 
-        elif policy.architecture == 'diffusion':
+        elif policy.architecture == 'diffusion' or policy.architecture == 'mse_diffusion':
             actions = policy.forward_diffusion(obs, deterministic=True, clip_action=True)
             log_probs = np.array([0.0])
             mu = np.array([[0.0, 0.0]])
