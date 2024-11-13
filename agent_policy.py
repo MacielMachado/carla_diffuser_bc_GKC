@@ -79,7 +79,7 @@ class AgentPolicy(nn.Module):
             is_dropout=False,
             is_batch=False,
             activation="relu",
-            net_type='fc',
+            net_type='transformer',
             use_prev=False)
 
         self._build()
@@ -277,7 +277,38 @@ class AgentPolicy(nn.Module):
         noise_pred_batch = self.nn_downstream(y_t, latent_pi, _ts / self.n_T, context_mask)
 
         return self.loss_mse(noise, noise_pred_batch)
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def evaluate_actions_mse_diffusion(self, obs_dict: Dict[str, th.Tensor], actions: th.Tensor):
+        features = self._get_features(obs_dict)
+        
+        # MSE
+        actions_pred = self._get_action(features)
+        loss_mse = self.compute_mse_loss(actions, actions_pred)
+
+        # Diffusion
+        _ts = th.randint(1, self.n_T + 1, (actions.shape[0], 1)).to(self.device)
+        context_mask = th.bernoulli(th.zeros(obs_dict['birdview'].shape[0]) + self.drop_prob).to(self.device)
+        noise = th.randn_like(actions).to(self.device)
+        y_t = self.sqrtab[_ts] * actions + self.sqrtmab[_ts] * noise
+        latent_pi = self.policy_head(features)
+        noise_pred_batch = self.nn_downstream(y_t, latent_pi, _ts / self.n_T, context_mask)
+        loss_diffusion = self.loss_mse(noise, noise_pred_batch)
+
+        return loss_mse, loss_diffusion
+
+
     def forward_diffusion(self, obs_dict: Dict[str, np.ndarray], deterministic: bool = False, clip_action: bool = False):
         # also use this as a shortcut to avoid doubling batch when guide_w is zero
         is_zero = False

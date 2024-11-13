@@ -66,6 +66,7 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
 
     for i_episode in tqdm.tqdm(range(start_ep, episodes)):
         current_lr = decay_lr(i_episode, initial_lr, episodes)
+        alpha = exponential_decay(i_episode, episodes)
         for param_group in optimizer.param_groups:
             param_group['lr'] = current_lr
 
@@ -89,6 +90,9 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
                 loss = policy.evaluate_actions_mse(obs_tensor_dict, expert_action)
             elif policy.architecture == 'diffusion':
                 loss = policy.evaluate_actions_diffusion(obs_tensor_dict, expert_action)
+            elif policy.architecture == 'mse_diffusion':
+                loss_mse, loss_diffusion = policy.evaluate_actions_mse_diffusion(obs_tensor_dict, expert_action)
+                loss = alpha * loss_mse + (1-alpha) * loss_diffusion
 
             total_loss += loss
             i_batch += 1
@@ -115,7 +119,7 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
                     eval_loss = bcloss + ent_weight * entropy_loss
                 elif policy.architecture == 'mse':
                     eval_loss = policy.evaluate_actions_mse(obs_tensor_dict, expert_action)
-                elif policy.architecture == 'diffusion':
+                elif policy.architecture == 'diffusion' or policy.architecture == 'mse_diffusion':
                     eval_loss = policy.evaluate_actions_diffusion(obs_tensor_dict, expert_action)
 
             total_eval_loss += eval_loss
@@ -147,7 +151,9 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
 def decay_lr(epoch, lrate, episodes):
     return lrate * ((np.cos((epoch / episodes) * np.pi) + 1) / 2)
 
-
+def exponential_decay(epoch, total_episodes, initial_value=1.0, final_value=0.01):
+    decay_rate = -np.log(final_value / initial_value) / total_episodes
+    return initial_value * np.exp(-decay_rate * epoch)
 
 def env_maker():
     cfg = json.load(open("config.json", "r"))
