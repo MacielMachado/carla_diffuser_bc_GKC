@@ -306,7 +306,7 @@ class AgentPolicy(nn.Module):
         noise_pred_batch = self.nn_downstream(y_t, latent_pi, _ts / self.n_T, context_mask)
         loss_diffusion = self.loss_mse(noise, noise_pred_batch)
 
-        return loss_mse, loss_diffusion
+        return loss_mse, th.pow(loss_diffusion, 0.5)
 
 
     def forward_diffusion(self, obs_dict: Dict[str, np.ndarray], deterministic: bool = False, clip_action: bool = False):
