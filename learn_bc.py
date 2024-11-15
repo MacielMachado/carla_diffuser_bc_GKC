@@ -6,6 +6,7 @@ from pathlib import Path
 import wandb
 import gym
 import json
+import random
 
 from expert_dataset import ExpertDataset
 from agent_policy import AgentPolicy
@@ -25,11 +26,11 @@ env_configs = {
 
 
 def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train):
-    output_dir = Path('outputs_diff_mse_diffusion')
+    output_dir = Path('outputs_diff_mse_diffusion_test')
     output_dir.mkdir(parents=True, exist_ok=True)
     last_checkpoint_path = output_dir / 'checkpoint.txt'
 
-    ckpt_dir = Path('ckpt_diff_sem_trajetoria_mse_diffusion')
+    ckpt_dir = Path('ckpt_diff_sem_trajetoria_mse_diffusion_test')
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     if resume_last_train:
@@ -53,7 +54,7 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
         start_ep = 0
         i_steps = 0
 
-    video_path = Path('video_diff_sem_trajetoria_mse_diffusion')
+    video_path = Path('video_diff_sem_trajetoria_mse_diffusion_test')
     video_path.mkdir(parents=True, exist_ok=True)
 
     initial_lr = 1e-5
@@ -91,7 +92,7 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train)
             elif policy.architecture == 'diffusion':
                 loss = policy.evaluate_actions_diffusion(obs_tensor_dict, expert_action)
             elif policy.architecture == 'mse_diffusion':
-                loss_mse, loss_diffusion = policy.evaluate_actions_mse_diffusion(obs_tensor_dict, expert_action)
+                loss_mse, loss_diffusion = policy.evaluate_actions_mse_diffusion_test(obs_tensor_dict, expert_action)
                 loss = alpha * loss_mse + (1-alpha) * loss_diffusion
 
             total_loss += loss
@@ -166,6 +167,23 @@ def env_maker():
     env = RlBirdviewWrapper(env)
     return env
 
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    th.manual_seed(seed)
+    th.cuda.manual_seed(seed)
+    th.cuda.manual_seed_all(seed)
+    th.backends.cudnn.deterministic = True
+    th.backends.cudnn.benchmark = False
+
+
+def reset_weights(model):
+    for layer in model.children():
+        if hasattr(layer, 'reset_parameters'):
+            layer.reset_parameters()
+
+
 if __name__ == '__main__':
     env = DummyVecEnv([env_maker])
 
@@ -218,7 +236,7 @@ if __name__ == '__main__':
 
     policy.to(device)
 
-    batch_size = 24
+    batch_size = 1024
 
     gail_train_loader = th.utils.data.DataLoader(
         ExpertDataset(
