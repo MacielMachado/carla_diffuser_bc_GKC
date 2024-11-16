@@ -1,0 +1,10 @@
+.venv
+video*
+gail_experts*
+ckpt*
+outputs*
+wandb
+screenlog.0
+*.png
+.vscode
+__pycache__
