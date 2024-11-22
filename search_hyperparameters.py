@@ -57,7 +57,7 @@ def env_maker():
     return env
 
 
-def get_git_commit_hash(self):
+def get_git_commit_hash():
     repo = git.Repo(search_parent_directories=True)
     return repo.head.object.hexsha
 
