@@ -145,7 +145,6 @@ if __name__ == '__main__':
             'embedding_dim': embedding_dim,
             'betas': betas,
             'n_T': n_T,
-            'batch_size': batch_size,
         }
 
         policy = AgentPolicy(**policy_kwargs)
@@ -224,6 +223,7 @@ if __name__ == '__main__':
             'lrate': lrate,
             'lrate_type': lrate_type,
             'alpha': alpha,
+            'batch_size': batch_size,
             'commit_hash': get_git_commit_hash()
             }
 
