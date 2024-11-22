@@ -209,9 +209,9 @@ def ddpm_schedules(beta1, beta2, T, is_linear=True):
 
 
 class Model_Cond_Diffusion(nn.Module):
-    def __init__(self, nn_model, betas, n_T, device, x_dim, y_dim, drop_prob=0.1, guide_w=0.0):
+    def __init__(self, nn_model, betas, n_T, device, x_dim, y_dim, drop_prob=0.1, guide_w=0.0, is_linear=True):
         super(Model_Cond_Diffusion, self).__init__()
-        for k, v in ddpm_schedules(betas[0], betas[1], n_T).items():
+        for k, v in ddpm_schedules(betas[0], betas[1], n_T, is_linear).items():
             self.register_buffer(k, v)
 
         self.nn_model = nn_model
@@ -311,12 +311,12 @@ class Model_Cond_Diffusion(nn.Module):
         else:
             return y_i
 
-    def sample_update(self, x_batch, betas, n_T, return_y_trace=False):
+    def sample_update(self, x_batch, betas, n_T, return_y_trace=False, is_linear=True):
         original_nT = self.n_T
 
         # set new schedule
         self.n_T = n_T
-        for k, v in ddpm_schedules(betas[0], betas[1], self.n_T).items():
+        for k, v in ddpm_schedules(betas[0], betas[1], self.n_T, is_linear).items():
             self.register_buffer(k, v.to(self.device))
 
         # also use this as a shortcut to avoid doubling batch when guide_w is zero
@@ -372,7 +372,7 @@ class Model_Cond_Diffusion(nn.Module):
 
         # reset original schedule
         self.n_T = original_nT
-        for k, v in ddpm_schedules(betas[0], betas[1], self.n_T).items():
+        for k, v in ddpm_schedules(betas[0], betas[1], self.n_T, is_linear).items():
             self.register_buffer(k, v.to(self.device))
 
         if return_y_trace:

@@ -40,8 +40,16 @@ class EgoVehicleHandler(object):
             bp_filter = actor_config[ev_id]['model']
             blueprint = np.random.choice(self._world.get_blueprint_library().filter(bp_filter))
             blueprint.set_attribute('role_name', ev_id)
-
-            if len(route_config[ev_id]) == 0:
+            
+            if 'spawn_point' in task_config.keys():
+                spawn_transform = np.random.choice([x[1] for x in self._spawn_transforms])
+                spawn_transform.location.x = task_config['spawn_point']['x']
+                spawn_transform.location.y = task_config['spawn_point']['y']
+                spawn_transform.location.z = task_config['spawn_point']['z']
+                spawn_transform.rotation.pitch = task_config['spawn_point']['pitch']
+                spawn_transform.rotation.roll = task_config['spawn_point']['roll']
+                spawn_transform.rotation.yaw = task_config['spawn_point']['yaw']
+            elif len(route_config[ev_id]) == 0:
                 spawn_transform = np.random.choice([x[1] for x in self._spawn_transforms])
             else:
                 spawn_transform = route_config[ev_id][0]

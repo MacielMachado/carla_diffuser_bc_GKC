@@ -1,4 +1,6 @@
 .venv
+eval/
+checkpoints/
 video*
 gail_experts*
 ckpt*
@@ -7,4 +9,5 @@ wandb
 screenlog.0
 *.png
 .vscode
+*.json
 __pycache__

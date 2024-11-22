@@ -11,7 +11,9 @@ from rl_birdview_wrapper import RlBirdviewWrapper
 import torch as th
 from pathlib import Path
 import os
+import math
 from stable_baselines3.common.vec_env import DummyVecEnv
+from carla_gym.envs import EndlessFixedSpawnEnv
 
 
 env_configs = {
@@ -21,13 +23,47 @@ env_configs = {
     'weather_group': 'dynamic_1.0'
 }
 
+env_configs = {
+    'carla_map': 'Town01',
+    'weather_group': 'dynamic_1.0',
+    'routes_group': ''
+}
 
-def evaluate_policy(env, policy, video_path, min_eval_steps=3000):
+spawn_point = {
+    'pitch':360.0,
+    'roll':0.0,
+    'x':338.6842956542969,
+    'y':176.00216674804688,
+    'yaw':269.9790954589844,
+    'z':0.0
+}
+
+spawn_point_t_intersection = {
+    'pitch':360.0,
+    'roll':0.0,
+    'x':110.6903991699219,
+    'y':194.78451538085938,
+    'yaw':179.83230590820312,
+    'z':0.0
+}
+
+def env_maker():
+    cfg = json.load(open("config.json", "r"))
+    env = EndlessFixedSpawnEnv(obs_configs=obs_configs, reward_configs=reward_configs,
+                    terminal_configs=terminal_configs, host='localhost', port=2020,
+                    seed=2021, no_rendering=True, **env_configs, spawn_point=spawn_point)
+    env = RlBirdviewWrapper(env)
+    return env
+
+
+def evaluate_policy(env, policy, video_path, min_eval_steps=500):
+    # env = DummyVecEnv([env_maker]) 
     policy = policy.eval()
     t0 = time.time()
     for i in range(env.num_envs):
         env.set_attr('eval_mode', True, indices=i)
     obs = env.reset()
+    previous_position = obs['gnss'][0]
 
     list_render = []
     ep_stat_buffer = []
@@ -38,7 +74,8 @@ def evaluate_policy(env, policy, video_path, min_eval_steps=3000):
     n_step = 0
     n_timeout = 0
     env_done = np.array([False]*env.num_envs)
-    # while n_step < min_eval_steps:
+    distance_traveled = 0
+    distance_traveled_list = []
     while n_step < min_eval_steps or not np.all(env_done):
         if policy.architecture == 'mse':
             actions = policy.forward_mse(obs, deterministic=True, clip_action=True)
@@ -46,7 +83,7 @@ def evaluate_policy(env, policy, video_path, min_eval_steps=3000):
             mu = np.array([[0.0, 0.0]])
             sigma = np.array([0.0, 0.0])
 
-        elif policy.architecture == 'diffusion' or policy.architecture == 'mse_diffusion':
+        elif policy.architecture == 'diffusion' or policy.architecture == 'mse_diffusion' or policy.architecture == 'distribution_diffusion':
             actions = policy.forward_diffusion(obs, deterministic=True, clip_action=True)
             log_probs = np.array([0.0])
             mu = np.array([[0.0, 0.0]])
@@ -56,6 +93,9 @@ def evaluate_policy(env, policy, video_path, min_eval_steps=3000):
             actions, log_probs, mu, sigma, _ = policy.forward(obs, deterministic=True, clip_action=True)
 
         obs, reward, done, info = env.step(actions)
+
+        distance_traveled += calculate_distance_traveled(obs['gnss'][0], previous_position)
+        # print(distance_traveled)
 
         for i in range(env.num_envs):
             env.set_attr('action_log_probs', log_probs[i], indices=i)
@@ -72,8 +112,12 @@ def evaluate_policy(env, policy, video_path, min_eval_steps=3000):
                 ep_stat_buffer.append(info[i]['episode_stat'])
             if n_step < min_eval_steps or not np.all(env_done):
                 route_completion_buffer.append(info[i]['route_completion'])
+            distance_traveled_list.append(distance_traveled)
+            distance_traveled = 0
             ep_events[f'venv_{i}'].append(info[i]['episode_event'])
             n_timeout += int(info[i]['timeout'])
+            obs = env.reset()
+            previous_position = obs['gnss'][0]
 
     for ep_info in info:
         route_completion_buffer.append(ep_info['route_completion'])
@@ -95,7 +139,9 @@ def evaluate_policy(env, policy, video_path, min_eval_steps=3000):
     for i in range(env.num_envs):
         env.set_attr('eval_mode', False, indices=i)
     obs = env.reset()
-    return avg_ep_stat, avg_route_completion, ep_events
+    # del env
+    return avg_ep_stat, avg_route_completion, ep_events, np.array(distance_traveled_list).mean()
+
 
 def get_avg_ep_stat(ep_stat_buffer, prefix=''):
     avg_ep_stat = {}
@@ -135,11 +181,36 @@ def get_avg_route_completion(ep_route_completion, prefix=''):
     return avg_ep_stat
 
 
+def calculate_distance_traveled(current_position, previous_position):
+    """
+    Calcula a distância percorrida por um veículo desde a última posição registrada.
+    
+    Args:
+        vehicle: Objeto do veículo no CARLA.
+        previous_position: Última posição registrada do veículo (carla.Location).
+    
+    Returns:
+        distance: Distância percorrida desde a última posição (float).
+        current_position: Posição atual do veículo (carla.Location).
+    """
+    
+    if previous_position is None:
+        # Primeira chamada: sem deslocamento
+        return 0.0, current_position
+
+    # Calcular o deslocamento 3D
+    dx = current_position[0] - previous_position[0]
+    dy = current_position[1] - previous_position[1]
+    dz = current_position[2] - previous_position[2]
+    distance = math.sqrt(dx**2 + dy**2)
+    
+    return distance
+
 def env_maker():
     cfg = json.load(open("config.json", "r"))
-    env = EndlessEnv(obs_configs=obs_configs, reward_configs=reward_configs,
+    env = EndlessFixedSpawnEnv(obs_configs=obs_configs, reward_configs=reward_configs,
                     terminal_configs=terminal_configs, host='localhost', port=2020,
-                    seed=2021, no_rendering=True, **env_configs)
+                    seed=2021, no_rendering=True, **env_configs, spawn_point=spawn_point)
     env = RlBirdviewWrapper(env)
     return env
 
@@ -177,13 +248,13 @@ if __name__ == '__main__':
         for i in range(5):
             # model_path = 'ckpt_mse_sem_trajetoria_update/bc_ckpt_9_min_eval.pth'
             model_path = 'ckpt_mse_sem_trajetoria_update/' + model 
-            video_path = 'evaluate/video_mse_sem_trajetoria_update'
+            video_path = 'evaluate_3/video_mse_sem_trajetoria_update'
             os.makedirs(video_path, exist_ok=True)
             video_path = video_path + f'/{model.split(".")[0]}_{i}.mp4'
             policy = AgentPolicy(**policy_kwargs)
             policy.load_state_dict(th.load(model_path)['policy_state_dict'])
             policy.to('cuda')
-            avg_ep_stat, avg_route_completion, ep_events = evaluate_policy(env=env, policy=policy, video_path=video_path)
+            avg_ep_stat, avg_route_completion, ep_events, distance_traveled = evaluate_policy(env=env, policy=policy, video_path=video_path)
             avg_lenght_in_m += avg_route_completion['eval/route_length_in_m']
         
             print(f'model: {model} - index: {i} - {avg_lenght_in_m/(i+1)}')

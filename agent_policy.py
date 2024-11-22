@@ -22,6 +22,9 @@ class AgentPolicy(nn.Module):
                  features_extractor_kwargs={},
                  distribution_entry_point=None,
                  distribution_kwargs={},
+                 beta_scheduler='linear',
+                 net_type='transformer',
+                 embedding_dim=128,
                  architecture='distribution',
                  betas=(1e-4, 0.02), 
                  n_T=20,
@@ -39,6 +42,7 @@ class AgentPolicy(nn.Module):
         self.betas = betas
         self.drop_prob = drop_prob
         self.guide_w = 0.0
+        self.is_linear = True if beta_scheduler == 'linear' else False
 
         self.loss_mse = nn.MSELoss()
 
@@ -72,18 +76,18 @@ class AgentPolicy(nn.Module):
 
         self.nn_downstream = Model_mlp_diff_embed(
             x_dim=256,
-            n_hidden=128,
+            n_hidden=embedding_dim,
             y_dim=2,
             embed_dim=128,
             output_dim=2,
             is_dropout=False,
             is_batch=False,
             activation="relu",
-            net_type='transformer',
-            use_prev=False)
+            net_type=net_type,
+            use_prev=False,)
 
         self._build()
-        for k, v in ddpm_schedules(betas[0], betas[1], n_T).items():
+        for k, v in ddpm_schedules(betas[0], betas[1], n_T, self.is_linear).items():
             self.register_buffer(k, v)
             
     def reset_noise(self, n_envs: int = 1) -> None:
@@ -140,12 +144,12 @@ class AgentPolicy(nn.Module):
             sigma = self.dist_sigma
         else:
             sigma = self.dist_sigma(latent_pi)
-        return self.action_dist.proba_distribution(mu, sigma), mu.detach().cpu().numpy(), sigma.detach().cpu().numpy()
+        return self.action_dist.proba_distribution(mu, sigma), mu.detach().cpu().numpy(), sigma.detach().cpu().numpy(), latent_pi
 
     def evaluate_actions(self, obs_dict: Dict[str, th.Tensor], actions: th.Tensor):
         features = self._get_features(obs_dict)
 
-        distribution, _, _ = self._get_action_dist_from_features(features)
+        distribution, _, _, _ = self._get_action_dist_from_features(features)
         actions = self.scale_action(actions)
         log_prob = distribution.log_prob(actions)
         return log_prob, distribution.entropy_loss()
@@ -157,7 +161,7 @@ class AgentPolicy(nn.Module):
         with th.no_grad():
             obs_tensor_dict = dict([(k, th.as_tensor(v).to(self.device)) for k, v in obs_dict.items()])
             features = self._get_features(obs_tensor_dict)
-            distribution, mu, sigma = self._get_action_dist_from_features(features)
+            distribution, mu, sigma, _ = self._get_action_dist_from_features(features)
             actions = distribution.get_actions(deterministic=deterministic)
             log_prob = distribution.log_prob(actions)
 
@@ -278,18 +282,6 @@ class AgentPolicy(nn.Module):
 
         return self.loss_mse(noise, noise_pred_batch)
 
-
-
-
-
-
-
-
-
-
-
-
-
     def evaluate_actions_mse_diffusion(self, obs_dict: Dict[str, th.Tensor], actions: th.Tensor):
         features = self._get_features(obs_dict)
         
@@ -308,6 +300,23 @@ class AgentPolicy(nn.Module):
 
         return loss_mse, th.pow(loss_diffusion, 0.5)
 
+    def evaluate_actions_distribution_diffusion(self, obs_dict: Dict[str, th.Tensor], actions: th.Tensor):
+        features = self._get_features(obs_dict)
+        
+        # Distribution
+        distribution, _, _, latent_pi = self._get_action_dist_from_features(features)
+        actions = self.scale_action(actions)
+        log_prob = distribution.log_prob(actions)
+
+        # Diffusion
+        _ts = th.randint(1, self.n_T + 1, (actions.shape[0], 1)).to(self.device)
+        context_mask = th.bernoulli(th.zeros(obs_dict['birdview'].shape[0]) + self.drop_prob).to(self.device)
+        noise = th.randn_like(actions).to(self.device)
+        y_t = self.sqrtab[_ts] * actions + self.sqrtmab[_ts] * noise
+        noise_pred_batch = self.nn_downstream(y_t, latent_pi, _ts / self.n_T, context_mask)
+        loss_diffusion = self.loss_mse(noise, noise_pred_batch)
+
+        return log_prob, distribution.entropy_loss(), th.pow(loss_diffusion, 0.5)
 
     def forward_diffusion(self, obs_dict: Dict[str, np.ndarray], deterministic: bool = False, clip_action: bool = False):
         # also use this as a shortcut to avoid doubling batch when guide_w is zero
@@ -343,24 +352,6 @@ class AgentPolicy(nn.Module):
                 eps = self.nn_downstream(y_i, latent_pi, t_is / self.n_T, context_mask)
 
             actions = self.oneover_sqrta[i] * (y_i - eps * self.mab_over_sqrtmab[i]) + self.sqrt_beta_t[i] * z
-        actions = actions.cpu().numpy()
-        if clip_action:
-            actions = np.clip(actions, self.action_space.low, self.action_space.high)
-        return actions
-
-
-
-
-
-
-
-
-
-        with th.no_grad():
-            obs_tensor_dict = dict([(k, th.as_tensor(v).to(self.device)) for k, v in obs_dict.items()])
-            features = self._get_features(obs_tensor_dict)
-            actions = self._get_action(features)
-
         actions = actions.cpu().numpy()
         if clip_action:
             actions = np.clip(actions, self.action_space.low, self.action_space.high)
