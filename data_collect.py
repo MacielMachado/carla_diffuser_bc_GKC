@@ -30,7 +30,7 @@ terminal_configs = {
 env_configs = {
     'carla_map': 'Town01',
     'weather_group': 'dynamic_1.0',
-    'routes_group': 'train'
+    'routes_group': 't'
 }
 
 obs_configs = {
@@ -90,13 +90,13 @@ obs_configs = {
 if __name__ == '__main__':
     cfg = json.load(open("config.json", "r"))
     env = LeaderboardEnv(obs_configs=obs_configs, reward_configs=reward_configs,
-                         terminal_configs=terminal_configs, host="localhost", port=cfg['port'],
+                         terminal_configs=terminal_configs, host="localhost", port=2025,
                          seed=2021, no_rendering=False, **env_configs)
     env = RlBirdviewWrapper(env)
-    expert_file_dir = Path('gail_experts')
+    expert_file_dir = Path('gail_experts_t')
     expert_file_dir.mkdir(parents=True, exist_ok=True)
     # obs_metrics = ['control', 'vel_xy', 'linear_speed', 'vec', 'traj', 'cmd', 'command', 'state']
-    for route_id in tqdm.tqdm(range(10)):
+    for route_id in tqdm.tqdm(range(2)):
         env.set_task_idx(route_id)
         n_episodes = 1  # change to more if there is noisy actions
         for ep_id in range(n_episodes):

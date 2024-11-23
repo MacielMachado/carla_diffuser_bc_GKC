@@ -22,7 +22,7 @@ class LeaderboardEnv(CarlaMultiAgentEnv):
 
     @staticmethod
     def build_all_tasks(carla_map, weather_group, routes_group, routes_file):
-        assert carla_map in ['Town01', 'Town02', 'Town03', 'Town04', 'Town05', 'Town06']
+        assert carla_map in ['Town01', 'Town02', 'Town03', 'Town04', 'Town05', 'Town06', 'Town01_t']
         num_zombie_vehicles = {
             'Town01': 120,
             'Town02': 70,
@@ -60,6 +60,9 @@ class LeaderboardEnv(CarlaMultiAgentEnv):
         if carla_map == 'Town04' and routes_group is not None:
             description_folder = CARLA_GYM_ROOT_DIR / 'envs/scenario_descriptions/LeaderBoard' \
                 / f'Town04_{routes_group}'
+        elif carla_map == 'Town01' and routes_group is not None:
+            description_folder = CARLA_GYM_ROOT_DIR / 'envs/scenario_descriptions/LeaderBoard' \
+                / f'Town01_{routes_group}'
         else:
             description_folder = CARLA_GYM_ROOT_DIR / 'envs/scenario_descriptions/LeaderBoard' / carla_map
 

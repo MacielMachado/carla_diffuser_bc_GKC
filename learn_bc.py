@@ -56,10 +56,10 @@ def learn_bc(policy, device, expert_loader, eval_loader, env, resume_last_train,
         # wandb.init(project='gail-carla2', id=wandb_run_id, resume='must')
     else:
         if name != None:
-            run = wandb.init(project='distribution-diffusion-search-hyperparameters',
+            run = wandb.init(project=name.split('/')[0],
                             reinit=True,
                             config=config,
-                            name=name)
+                            name=name.split('/')[-1])
         else:
             run = wandb.init(project='distribution-diffusion-search-hyperparameters',
                             reinit=True,
